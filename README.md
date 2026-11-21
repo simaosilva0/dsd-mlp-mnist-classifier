@@ -53,13 +53,16 @@ IM holds 16 images (7 rows of pixels and 1 blank row each). How to store `h` and
   classification. The 7-segment display shows the image number (leftmost digit) and the result
   (rightmost digit). `LD0` lights when a classification is done.
 - A testbench that classifies all 16 images, compares `h`, `o` and `result` against the
-  software model (`SW-model-2026116.zip`), counts correct classifications and covers extreme
+  software model (`materials/SW-model-2026116.zip`), counts correct classifications and covers extreme
   cases (max/min accumulations, ReLU of negatives, argmax ties).
 - A report (11 pages max): datapath and FSM diagrams, FPGA resources, clock period and max
   frequency, latency per image, MAC/s and images/s, critical path.
 
 ## Files
 
-- `lab3-psd26s1-20261116.pdf`: assignment (latest version)
+Course materials, as given, are in `materials/`:
+
+- `lab3-psd26s1-20261116.pdf`: assignment (latest version; `lab3-psd26s1-20271107.pdf` is an
+  older draft that still describes 10 images)
 - `IMem.vhd`, `WMem0.vhd`, `WMem1.vhd`: memories from the course page
 - `SW-model-2026116.zip`: Python reference model, the 16 test images and the weights
