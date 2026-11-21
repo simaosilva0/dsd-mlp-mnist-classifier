@@ -1,0 +1,16 @@
+# GHDL / simulation output
+build/
+*.vcd
+*.ghw
+
+# Vivado generated files (keep sources, constraints and reports you copy out by hand)
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.gen/
+.Xil/
+*.jou
+*.log
+*.str
