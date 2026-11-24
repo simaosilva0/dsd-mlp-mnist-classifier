@@ -14,3 +14,6 @@ build/
 *.jou
 *.log
 *.str
+
+# Local Vivado project (create it by hand in vivado/)
+vivado/

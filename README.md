@@ -55,7 +55,7 @@ IM holds 16 images (7 rows of pixels and 1 blank row each). How to store `h` and
   the image number (leftmost digit) and the result (rightmost digit). `LD0` lights when a
   classification is done.
 - A testbench that classifies all 16 images, compares `h`, `o` and `result` against the
-  software model (`materials/SW-model-2026116.zip`), counts correct classifications and covers extreme
+  software model (`materials/SW-model-2026116/mlp_model.py`), counts correct classifications and covers extreme
   cases (max/min accumulations, ReLU of negatives, argmax ties).
 - A report (11 pages max): datapath and FSM diagrams, FPGA resources, clock period and max
   frequency, latency per image, MAC/s and images/s, critical path. Open resources we did not
@@ -68,7 +68,16 @@ Course materials, as given, are in `materials/`:
 - `lab3-psd26s1-20261116.pdf`: assignment (latest version; `lab3-psd26s1-20271107.pdf` is an
   older draft that still describes 10 images)
 - `IMem.vhd`, `WMem0.vhd`, `WMem1.vhd`: memories from the course page
-- `SW-model-2026116.zip`: Python reference model, the 16 test images and the weights
+- `SW-model-2026116/`: Python reference model (`mlp_model.py`), the 16 test images (`.pgm`) and the
+  weights (`w0.txt`, `w1.txt`)
+- Not in the repo yet: the course memory generator `gen_mem.py` (named in the headers of the memory
+  files). Track C needs it, from the course page, to generate the extreme-case memories.
+
+Current state: `src/` (`circuito`, `control`, `datapath`) and `sim/circuito_tb.vhd` are the
+Lab 2 version B files, copied as the starting point to be rewritten for Lab 3. `board/basys3.xdc`
+has the Basys 3 pins for the board top (clock, BTNU, BTNC, SW3..SW0, LD0, 7-segment display).
+Create the Vivado project by hand in `vivado/` (ignored by git); do not
+commit Vivado project files.
 
 Planned layout of our own files (same conventions as Lab 2):
 
@@ -79,6 +88,29 @@ scripts/   Python tools (memory generator, expected values) and Vivado Tcl
 board/     Basys 3 top level and constraints (.xdc)
 report/    LaTeX source, figures
 ```
+
+## Setting up the Vivado project
+
+The Vivado project is not in git: each of us creates it once, locally, linked to the repo files.
+Vivado 2025.2.
+
+1. **Create Project** → Next. Name `project_lab3`, location `<repo>/vivado` (this folder is
+   ignored by git). RTL Project, tick *Do not specify sources at this time*.
+   Part: `xc7a35tcpg236-1`. Finish.
+2. **Add Sources → design sources → Add Files:** everything in `src/`, plus
+   `materials/IMem.vhd`, `materials/WMem0.vhd`, `materials/WMem1.vhd`.
+   **Untick "Copy sources into project"**, so that edits go to the files git tracks.
+3. **Add Sources → simulation sources:** the testbench(es) in `sim/`, copy unticked.
+4. **Add Sources → constraints:** `board/basys3.xdc`, copy unticked. Only enable it when the board
+   top is the top module (right-click → Disable File while simulating or synthesising `mlp` alone).
+5. **Set as Top:** `mlp` (or the board top for the bitstream); simulation top: the testbench.
+   Simulation run time: about 200 us for the 16 images.
+6. After `git pull`, new files in `src/` or `sim/` must be added to the project by hand
+   (Add Sources again); edited files are picked up automatically.
+
+Note: until the Lab 2 files are rewritten, `circuito.vhd` still refers to the Lab 2 memories
+(`IMemB`, `WMemA`, `OMemC`) and `circuito_tb.vhd` to `mem_data_pkg`, so Vivado will show them as
+missing. That is expected.
 
 ## Starting point: what we reuse from Lab 2 (version B)
 
@@ -132,18 +164,31 @@ number of lanes should be a generic.
 - *Lanes:* 112 (one row per cycle) or fewer. Needs a quick synthesis experiment (member A).
 - *Pipelining:* a 7-level adder tree of 12 to 19 bits will not fit in 10 ns after a LUT multiplier.
   Lab 2 already needed 9.78 ns for BRAM, multiplexer and one 8x8 multiplier. Register the
-  products first, then every 2 or 3 tree levels.
+  products first, then every 2 or 3 tree levels. The given BRAMs have no output register
+  (`DO_REG` is not set), so the BRAM clock-to-out (about 2.5 ns) and the routing from 35 BRAM
+  columns to 112 multipliers are on the first path. If BRAM -> multiplier -> register does not
+  meet timing, add a register stage on the 448 + 896 memory data bits before the multipliers.
+- *Clock ceiling:* the assignment allows 100 MHz or a *slower* derived clock, never a faster one,
+  so the best result is about 900 to 920 cycles x 10 ns, about 9 us per image. Pipeline stages are cheap:
+  each adds 1 cycle out of about 900.
 - *Layer 1 multipliers:* 10 in parallel (one per output, each 8 bits x 21 bits, one DSP48E1 each,
-  90 are available), because WM1 delivers all 10 weights in one read. Alternative: 2 shared multipliers.
+  90 are available), because WM1 delivers all 10 weights in one read. Alternative: 2 shared
+  multipliers (5 cycles per `h[m]`, which still fits in the 7 cycles of one neuron, but adds a mux
+  and a sequencer). Default: 10.
 - *`h` storage:* not needed. Each `h[m]` is consumed by layer 1 as soon as it is produced, so only
   the 10 `o` accumulators (10 x 31 bits, registers) are kept. `h[m]` is also sent to `hOut` for the testbench.
 - *Argmax:* sequential (one comparator, 9 cycles, strict `>` so the first maximum wins ties) or a
-  small pipelined tree (fewer cycles, more LUTs). Cost is a few cycles out of about 900.
+  small pipelined tree (fewer cycles, more LUTs). Cost is a few cycles out of about 900. In a
+  tree, every comparator must keep the *lower* index on equality (`a >= b`, `a` being the lower
+  index), or the "first maximum" rule breaks.
 - **Division by 32:** the assignment writes `(w1*h)/32` on each product, which in C truncates
   toward zero, but the Python model defaults to `shift` (`>> 5`, rounds toward minus infinity).
   They give different `o` values for negative products. The testbench compares `o`, so we must
   confirm which mode the course testbench uses (model option `shift`, `trunc` or `sum`) before
-  writing the layer-1 unit. `shift` is the cheapest in hardware.
+  writing the layer-1 unit. `shift` is the cheapest in fabric (drop 5 bits); `trunc` only adds
+  31 to negative products before the shift. `sum` is exact and fits the DSP48E1
+  multiply-accumulate directly (36-bit sum in the 48-bit P register, `>> 5` once at the end), so
+  it needs no fabric adders, but `o` is then not the per-product formula written in the assignment.
 
 ## Work division
 
@@ -159,6 +204,7 @@ Three tracks with clear interfaces, so that everybody can work in parallel. Fill
 
 - Write `l0_engine` with a `LANES` generic. Datapath and control stay separate entities, as the assignment requires.
 - Row counter 0..895 for WM0 (a counter, no multiplier for `7*m`), IM address `8*img + r` with `r = 0..6`.
+  Since 8*img is a shift, the IM address is just `img & r(2 downto 0)` (7 bits, no adder).
 - Run synthesis for 28, 56 and 112 lanes and report LUT, DSP and the worst setup slack, so the team can pick the final value.
 - Unit testbench: three neurons with known results, including negative `acc` and the extremes
   (all pixels 15 with all weights -128, and with all weights 127).
