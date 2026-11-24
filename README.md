@@ -4,6 +4,37 @@ Digital System Design (Projecto de Sistemas Digitais), MEEC 2026/27, lab project
 Target: Basys 3 board (Artix-7 xc7a35tcpg236-1), Vivado 2025.2.
 Team of three: Isam Abbasi (122334), Simão Gomes Silva (110486), Simão Manuel Miranda Silveira (110049).
 
+## Start here (2-minute read)
+
+**What we're building.** A circuit on the Basys 3 that looks at a 28x28 picture of a handwritten
+digit and says which digit it is (0 to 9). You pick one of 16 stored pictures with the switches,
+press the middle button, and the display shows the picture number on the left and the answer on
+the right.
+
+**How it works, in plain words.**
+1. **Layer 0:** for each of 128 "hidden neurons", multiply all 784 pixels by 784 weights and add
+   everything up. If the total is negative, use 0 instead (that's "ReLU"). That gives 128 numbers, `h`.
+2. **Layer 1:** for each digit 0..9, multiply the 128 `h` values by 128 weights, divide by 32
+   and add them up. That gives 10 scores, `o`.
+3. **Answer:** the digit with the biggest score wins (the first one, if there's a tie).
+
+**Why it's fast.** The weight memory hands us 112 weights per clock tick, so we do 112
+multiplications at once. One picture takes about 900 ticks, about 9 microseconds.
+
+**What's already decided.** The design is one "brain" file (`control.vhd`, decides *when*
+things happen) and one "muscle" file (`datapath.vhd`, does the maths). The professor requires
+this split. We start from our Lab 2 code, which already works this way.
+
+**What to do now.**
+1. Set up Vivado: see [Setting up the Vivado project](#setting-up-the-vivado-project).
+2. Read the [work plan](#work-plan-in-pieces) and put your name on a piece.
+3. Before you or your AI touches code, read the [rules for working with AI](#rules-for-working-with-ai-tools).
+
+**The only open question:** how to "divide by 32" for negative numbers. We ask the professor
+(see [Open decisions](#open-decisions)).
+
+Words you don't know (FSMD, BRAM, lane, CDFG, WNS...)? See the [glossary](#glossary) at the end.
+
 ## The problem
 
 Classify a handwritten digit (0 to 9) from the MNIST dataset in hardware, using a small
@@ -29,7 +60,11 @@ Data formats:
 | `h`, `o` | 128, 10 | as many bits as needed for no loss of precision |
 
 The reference algorithm unrolls the layer-0 inner loop by 4 and overlaps the two layers: each
-`h[m]` goes into the 10 layer-1 accumulators as soon as it is computed.
+`h[m]` goes into the 10 layer-1 accumulators as soon as it is computed. The unroll by 4 describes
+the algorithm, not a hardware limit: unlike Lab 2, the PDF sets no limit on multipliers, the
+memories return 112 values per read, and the second objective is the highest performance. So our
+datapath processes a whole memory row (112 products) per cycle. The overlap is kept exactly as in
+the pseudocode.
 
 ## Given memories
 
@@ -43,23 +78,57 @@ All banks of a memory share one address, so a single read returns a whole row.
 
 IM holds 16 images (7 rows of pixels and 1 blank row each). How to store `h` and `o` is up to us.
 
-## What we have to build
+## What the assignment asks for (checklist, from the Lab 3 PDF)
 
-- An FSMD (FSM controller and datapath as separate entities) that classifies the selected image,
-  aiming for the best performance on the FPGA (pipelining, layer overlap).
-- MLP interface: inputs `clk`, `reset` (synchronous, active high), `start`, `img` (4 bits);
-  outputs `done`, `result` (4 bits), plus `hValid`, `hAddr` (7 bits) and `hOut` so the
-  testbench can check each `h[m]`.
-- A board top level: `SW3..SW0` select the image, `BTNU` resets, `BTNC` starts a new
-  classification (again and again, without a reset in between). The 7-segment display shows
-  the image number (leftmost digit) and the result (rightmost digit). `LD0` lights when a
-  classification is done.
-- A testbench that classifies all 16 images, compares `h`, `o` and `result` against the
-  software model (`materials/SW-model-2026116/mlp_model.py`), counts correct classifications and covers extreme
-  cases (max/min accumulations, ReLU of negatives, argmax ties).
-- A report (11 pages max): datapath and FSM diagrams, FPGA resources, clock period and max
-  frequency, latency per image, MAC/s and images/s, critical path. Open resources we did not
-  write (course memories, SW model, memory generator) must be referenced in the report.
+Priorities, as stated in the PDF: **(1) a functionally correct circuit demonstrated on the board;
+(2) the highest performance possible** on the Artix-7 of the Basys 3.
+
+Circuit (PDF, "Circuit Design"):
+
+- [ ] **FSMD**: an FSM controller and a datapath unit, **in separate VHDL entities**, that execute
+  the whole algorithm (layer 0, layer 1, argmax) and classify one selected image.
+- [ ] Optimise performance by **overlapping layer 0 and layer 1** and/or **pipelining**.
+- [ ] All computations in **appropriate representations, without loss of accuracy**. Calculate and
+  justify the **minimum number of bits** of products, partial sums and accumulators.
+- [ ] **Scheduling** of the operations, with the corresponding **CDFG** drawn.
+- [ ] Use **IM, WM0 and WM1 as given**. Decide and **justify how `h` and `o` are stored** (registers or
+  memory) and **how argmax() is computed**.
+- [ ] MLP interface: inputs `clk`, `reset` (synchronous, active high), `start`, `img` (4 bits);
+  outputs `done`, `result` (4 bits); for the testbench, `hValid`, `hAddr` (7 bits), `hOut`
+  (width of our choice) for **each new `h[m]`**.
+- [ ] One global clock: the 100 MHz board clock, or a **slower** clock derived from it if the
+  critical path needs it. All registers positive-edge-triggered.
+
+Board (PDF, Figure 5):
+
+- [ ] A top-level entity connects the MLP to the board. `SW3..SW0` = `img`; `BTNU` = `reset`;
+  `BTNC` = `start`. **Each BTNC press runs a new classification of the selected image, with no
+  reset in between.**
+- [ ] 7-segment display: the selected image on the **leftmost** digit (AN3), `result` on the
+  **rightmost** digit (AN0).
+- [ ] `LD0` = `done`, lit **only when the classification of an image has been completed**.
+- [ ] Demo: each of the 16 images selected with the switches and classified with BTNC, one after
+  the other.
+
+Verification (PDF, page 6):
+
+- [ ] A testbench for the MLP circuit that classifies the **16 images**, **compares `h`, `o` and
+  `result` with the software model** (`materials/SW-model-2026116/mlp_model.py`) and **reports the
+  number of correct classifications**.
+- [ ] **Extreme cases**: maximum and minimum accumulations, ReLU of negative values, ties in
+  argmax(), etc.
+- [ ] Performance evaluated with **Post-Implementation Timing Simulation**.
+- [ ] Circuit mapped to the FPGA and tested on the board.
+
+Report (11 pages max, readable font):
+
+- [ ] Block diagram of the architecture and of the datapath, with the **number and size of
+  registers, multiplexers and operators**.
+- [ ] FSM state diagram; CDFG and schedule.
+- [ ] FPGA resources used; clock period used and maximum operating frequency.
+- [ ] Performance in **MAC/s and images/s**; **latency of one image**; the **critical path**.
+- [ ] Every open resource we did not fully write (course memories, SW model, memory generator,
+  Lab 2 base, any board/display code) acknowledged and referenced.
 
 ## Files
 
@@ -71,10 +140,11 @@ Course materials, as given, are in `materials/`:
 - `SW-model-2026116/`: Python reference model (`mlp_model.py`), the 16 test images (`.pgm`) and the
   weights (`w0.txt`, `w1.txt`)
 - Not in the repo yet: the course memory generator `gen_mem.py` (named in the headers of the memory
-  files). Track C needs it, from the course page, to generate the extreme-case memories.
+  files). Piece 3 needs it, from the course page, to generate the extreme-case memories.
 
 Current state: `src/` (`circuito`, `control`, `datapath`) and `sim/circuito_tb.vhd` are the
-Lab 2 version B files, copied as the starting point to be rewritten for Lab 3. `board/basys3.xdc`
+Lab 2 version B files, copied as the starting point; piece 1 rewrites them (`circuito` becomes
+`mlp`, `circuito_tb` becomes `mlp_tb`). `board/basys3.xdc`
 has the Basys 3 pins for the board top (clock, BTNU, BTNC, SW3..SW0, LD0, 7-segment display).
 Create the Vivado project by hand in `vivado/` (ignored by git); do not
 commit Vivado project files.
@@ -84,7 +154,7 @@ Planned layout of our own files (same conventions as Lab 2):
 ```
 src/       VHDL of the design (one entity per file)
 sim/       testbenches, wave configs, generated expected-value packages
-scripts/   Python tools (memory generator, expected values) and Vivado Tcl
+scripts/   Python tools (expected values, extreme-case memories)
 board/     Basys 3 top level and constraints (.xdc)
 report/    LaTeX source, figures
 ```
@@ -114,156 +184,300 @@ missing. That is expected.
 
 ## Starting point: what we reuse from Lab 2 (version B)
 
-Lab 2 version B (`datapath.vhd`, `control.vhd`) already solves the same kind of problem on a
-smaller scale, so the new design should be a wider version of it, not a new idea:
+Lab 2 version B (`src/datapath.vhd`, `src/control.vhd`, `src/circuito.vhd`, `sim/circuito_tb.vhd`)
+already solves the same kind of problem on a smaller scale. Lab 3 is a wider version of it, with
+the same FSMD split:
 
-| Lab 2 version B | Reuse in Lab 3 |
+| Lab 2 version B | In Lab 3 |
 |---|---|
-| Datapath: 2 multipliers, `r1`/`r2` product registers, `r3` pair sum, 22-bit `acc`, ReLU on `acc(21)` | Same pipeline, but with up to 112 lanes (see below); `acc` stays 22 bits |
-| `first` signal: `acc_op = 0` when a new row starts | Same trick, so the accumulator needs no separate clear |
-| Control: small FSM (`S_IDLE`, `S_RUN`, `S_DRAIN`, `S_DONE`) plus counters (`ph`, `wcnt`, `ocnt`) outside the FSM | Same structure; counters now run over WM0 rows (0..895) |
-| Flags `v`, `f`, `l` that travel in a flip-flop chain next to the data | Same; they generate `hValid`, `first`, and the layer-1 write time |
-| Address is advanced one cycle before its data is needed, hiding the synchronous BRAM read | Same, for IM, WM0 and WM1 |
+| `control`: one small FSM (`S_IDLE`, `S_RUN`, `S_DRAIN`, `S_DONE`) plus counters outside the FSM | Still **the only** controller. The counters now walk the 896 WM0 rows, the 7 rows of each neuron and the argmax |
+| `datapath`: products, pair sum, 22-bit `acc`, ReLU on `acc(21)` | Same pipeline with 112 lanes and an adder tree, plus layer 1, the `o` registers and the argmax; `acc` stays 22 bits |
+| `first`: `acc_op = 0` when a new row starts | Same trick: the accumulator needs no clear state between neurons |
+| Flags `v`, `f`, `l` shifted next to the data | Same; they produce `hValid`/`hAddr`, `first`, the layer-1 update and the end of the run |
+| Address one cycle before its data is needed (synchronous BRAM read) | Same, for IM, WM0 and WM1 |
+| `circuito`: wires control, datapath and memories | Becomes `mlp` with the PDF's ports |
+| `circuito_tb`: compares against a generated package | Becomes `mlp_tb`, same pattern, with `h`, `o` and `result` |
 
-What is new in Lab 3: pixels are 4 bits unsigned (not 8-bit signed), 112 operands arrive per read
-instead of 4, there is a layer 1, an argmax, a `start`/`img` interface, and a board top level.
+New in Lab 3: 4-bit unsigned pixels (Lab 2: 8-bit signed), 112 operands per read (Lab 2: 4),
+layer 1, argmax, the `start`/`img`/`done` interface with restart, and the board top level.
 
-## Proposed architecture
+## Architecture (FSMD)
+
+### Entities
+
+The PDF asks for **one FSM controller and one datapath unit in separate entities**. All control
+decisions are in `control`; `datapath` has no FSM, only registers and operators driven by
+`control`. Large datapath blocks (lanes, adder tree, layer-1 MACs, argmax) may be separate entities
+*instantiated inside* `datapath`; it is still one datapath unit.
 
 ```
- IM --(112 pixels)--+                           +--> hValid/hAddr/hOut (to testbench)
-                    v                           |
- WM0 -(112 weights)-> [ Layer-0 engine ] -- h[m] +--> [ Layer-1 unit ] -- o[0..9] --> [ argmax ] --> result
-                          ^   (A)                          ^  (B)                      (B)
-                          |                                |
-                          +-------- FSM + counters (B) ----+-- WM1 (10 weights, column m)
+board_top            (board/board_top.vhd)  debounce BTNU/BTNC, 1-cycle start pulse, 7-segment, LD0
+ └─ mlp              (src/mlp.vhd)          ports exactly as the PDF; wiring only
+     ├─ control      (src/control.vhd)      the FSM, counters, flag chain: addresses, enables,
+     │                                      hValid, hAddr, done
+     ├─ datapath     (src/datapath.vhd)     layer 0: 112 multipliers, adder tree, acc, ReLU, h register (hOut)
+     │                                      layer 1: 10 x (w1 * h >> 5) + o[j]
+     │                                      argmax:  result register
+     ├─ IMem         (materials/, as given) 112 pixels per read,  address 8*img + r = img & r(2:0)
+     ├─ WMem0        (materials/, as given) 112 weights per read, address 7*m + r (a counter 0..895)
+     └─ WMem1        (materials/, as given) 10 weights per read,  address m
 ```
 
-**Bit widths** (worst cases, computed from the formats; re-check with a script before fixing the VHDL):
+`mlp` ports (PDF): `clk`, `reset` (sync, active high), `start`, `img(3:0)` in; `done`,
+`result(3:0)`, `hValid`, `hAddr(6:0)`, `hOut(20:0)` out.
+
+### Schedule (what the CDFG and the timing diagram in the report show)
+
+- **Layer 0, one WM0 row per cycle.** Each cycle, `control` presents IM row `img & r` and WM0 row
+  `7*m + r` (`r = 0..6`). One cycle later the 112 pixels and 112 weights reach the datapath: 112
+  products → adder tree → row sum (19 bits) → `acc` (22 bits). The 7 row sums of a neuron go into
+  `acc`; `first` restarts it at `r = 0`.
+- **ReLU and `h[m]`.** When the 7th row sum of neuron `m` is in `acc`, ReLU loads the `h` register
+  (21 bits), and `control` pulses `hValid` with `hAddr = m`. At the same edge `acc` starts neuron
+  `m+1` (no lost cycle, as in Lab 2).
+- **Layer 1, overlapped with layer 0** (the overlap the PDF asks for). WM1 row `m` is read one
+  cycle before `h[m]` is ready. Then the 10 products `w1[j][m] * h[m]` are formed in parallel,
+  shifted by 5 (division mode, see below) and added into `o[j]`, while layer 0 is already
+  computing neuron `m+1`. Layer 1 needs 1 to 2 cycles per neuron; a neuron takes 7, so layer 1
+  never stalls layer 0.
+- **Argmax.** After the last `o` update (`h[127]`), a sequential scan of `o[1..9]` against the
+  current maximum, strict `>`, so the first maximum wins a tie (9 cycles). Then `result` is
+  registered and `done` = 1.
+- **FSM:** `IDLE → RUN → DRAIN → ARGMAX → DONE`. `start` in `IDLE` or `DONE` latches `img`, clears
+  `o` and `done`, and enters `RUN`; `start` during a run is ignored. `RUN` lasts 896 cycles (one row
+  per cycle); `DRAIN` waits for the pipeline and the last layer-1 update.
+
+### Number representation (minimum bits, no loss of precision)
 
 | Value | Range | Bits |
 |---|---|---|
+| Pixel `Input[k]` | 0 .. 15 | 4, unsigned (zero-extended to 5 bits signed before multiplying) |
+| Weights `w0`, `w1` | -128 .. 127 | 8, signed |
 | Product pixel x w0 | -1920 .. 1905 | 12, signed |
 | Sum of the 112 products of one row | -215 040 .. 213 360 | 19, signed |
 | `acc` (784 products) | -1 505 280 .. 1 493 520 | 22, signed |
-| `h[m]` after ReLU | 0 .. 1 493 520 | 21, unsigned (this is the size of `hOut`) |
+| `h[m]` after ReLU | 0 .. 1 493 520 | 21, unsigned (= `hOut`) |
 | `w1 * h` | -191 170 560 .. 189 677 040 | 29, signed |
 | `(w1 * h) >> 5` | -5 974 080 .. 5 927 407 | 24, signed |
-| `o[j]` | -764 682 240 .. 758 708 096 | 31, signed |
+| `o[j]` (128 terms) | -764 682 240 .. 758 708 096 | 31, signed |
 
-**Performance ceiling.** One memory row is read per cycle, and each neuron needs 7 rows
-(784 / 112). So layer 0 cannot take fewer than `128 x 7 = 896` cycles, whatever the number of
-multipliers. Layer 1 (10 products per `h[m]`) fits in the time layer 0 spends on one neuron, so
-it is hidden by the overlap. Expect about 900 to 950 cycles per image once the pipeline fill and
-the argmax are added (to be measured). The layer-0 engine can be built with a smaller number of lanes (56 lanes = 14 cycles per
-neuron, 28 lanes = 28 cycles per neuron) if 112 multipliers do not meet timing or area; the
-number of lanes should be a generic.
+Intermediate levels of the adder tree grow by 1 bit per level: 12, 13, 14, 15, 16, 17, 18 → 19.
 
-**Choices to make early (they affect everyone):**
+### Storage and argmax (the decisions the PDF asks us to justify)
 
-- *Lanes:* 112 (one row per cycle) or fewer. Needs a quick synthesis experiment (member A).
-- *Pipelining:* a 7-level adder tree of 12 to 19 bits will not fit in 10 ns after a LUT multiplier.
-  Lab 2 already needed 9.78 ns for BRAM, multiplexer and one 8x8 multiplier. Register the
-  products first, then every 2 or 3 tree levels. The given BRAMs have no output register
-  (`DO_REG` is not set), so the BRAM clock-to-out (about 2.5 ns) and the routing from 35 BRAM
-  columns to 112 multipliers are on the first path. If BRAM -> multiplier -> register does not
-  meet timing, add a register stage on the 448 + 896 memory data bits before the multipliers.
-- *Clock ceiling:* the assignment allows 100 MHz or a *slower* derived clock, never a faster one,
-  so the best result is about 900 to 920 cycles x 10 ns, about 9 us per image. Pipeline stages are cheap:
-  each adds 1 cycle out of about 900.
-- *Layer 1 multipliers:* 10 in parallel (one per output, each 8 bits x 21 bits, one DSP48E1 each,
-  90 are available), because WM1 delivers all 10 weights in one read. Alternative: 2 shared
-  multipliers (5 cycles per `h[m]`, which still fits in the 7 cycles of one neuron, but adds a mux
-  and a sequencer). Default: 10.
-- *`h` storage:* not needed. Each `h[m]` is consumed by layer 1 as soon as it is produced, so only
-  the 10 `o` accumulators (10 x 31 bits, registers) are kept. `h[m]` is also sent to `hOut` for the testbench.
-- *Argmax:* sequential (one comparator, 9 cycles, strict `>` so the first maximum wins ties) or a
-  small pipelined tree (fewer cycles, more LUTs). Cost is a few cycles out of about 900. In a
-  tree, every comparator must keep the *lower* index on equality (`a >= b`, `a` being the lower
-  index), or the "first maximum" rule breaks.
-- **Division by 32:** the assignment writes `(w1*h)/32` on each product, which in C truncates
-  toward zero, but the Python model defaults to `shift` (`>> 5`, rounds toward minus infinity).
-  They give different `o` values for negative products. The testbench compares `o`, so we must
-  confirm which mode the course testbench uses (model option `shift`, `trunc` or `sum`) before
-  writing the layer-1 unit. `shift` is the cheapest in fabric (drop 5 bits); `trunc` only adds
-  31 to negative products before the shift. `sum` is exact and fits the DSP48E1
-  multiply-accumulate directly (36-bit sum in the 48-bit P register, `>> 5` once at the end), so
-  it needs no fabric adders, but `o` is then not the per-product formula written in the assignment.
+- **`h`: one 21-bit register, no memory.** Each `h[m]` is used by layer 1 right after it is
+  produced and is never needed again, and the next one arrives 7 cycles later. It also drives
+  `hOut`.
+- **`o`: ten 31-bit registers (310 FFs), no memory.** All ten are updated in the same cycle, which
+  a single-port memory could not do; they are cleared on each accepted `start`.
+- **Argmax: sequential, one comparator, 9 cycles.** Costs 9 of about 910 cycles (1 %), with one
+  31-bit comparator and a 10:1 mux on registers that already exist. A comparator tree would save
+  about 5 cycles for 9 comparators; if we use one, each comparator must keep the lower index on
+  equality.
 
-## Work division
+### Performance target
 
-Three tracks with clear interfaces, so that everybody can work in parallel. Fill in the owner column.
+- WM0 gives one row per cycle and an image needs 896 rows, so **896 cycles is the floor** for
+  any number of multipliers. With pipeline fill, the last layer-1 update and the argmax: about
+  **910 cycles**.
+- The PDF allows 100 MHz or a slower clock, never faster: target **10 ns → about 9.1 us per
+  image, about 110 000 images/s**.
+- Work per image: 128 x 784 + 10 x 128 = **101 632 MAC**, so about **11 GMAC/s** at 910 cycles and 10 ns.
+- If 112 lanes miss timing or area, fall back to 56 lanes (14 cycles per neuron, about 1 800
+  cycles); `LANES` is a generic.
 
-| Track | Owner | What |
+### Open decisions
+
+- **Division by 32 (ask the professor first).** The PDF writes `(w1*h)/32` per product (C:
+  truncation toward zero); the Python model defaults to `shift` (`>> 5`, toward minus infinity).
+  They give different `o` for negative products, and the testbench compares `o`. Until there is
+  an answer we use `shift`, the model default and the cheapest (drop 5 bits); `trunc` adds 31 to
+  negative products before the shift. `sum` (one `>> 5` at the end, 36-bit accumulator) is exact
+  but not the per-product formula in the PDF.
+- **Pipeline depth of layer 0** (register after the products, then every 2 or 3 tree levels; a
+  register on the memory data if needed). Fixed by the timing results of piece 5. Each stage costs
+  1 cycle out of about 910.
+- **Layer-1 multipliers:** 10 in parallel (one DSP48E1 each, 90 available) by default; 2 shared
+  would also fit in 7 cycles but needs a mux and a sequencer.
+
+## Work plan, in pieces
+
+Each piece is small, ends with something we can simulate in Vivado, and maps to items of the PDF
+checklist above. Do them in order; pieces 4 and 6 can run in parallel with the others.
+
+| # | Piece | Owner | Target date |
+|---|---|---|---|
+| 0 | Expected values from the SW model | ____ | 26-11 |
+| 1 | Layer 0: `control` + `datapath` + `mlp`, checks every `h[m]` | ____ | 03-12 |
+| 2 | Layer 1, argmax, `done`/`result`: all 16 images | ____ | 07-12 |
+| 3 | Restart and extreme cases | ____ | 10-12 |
+| 4 | Board top and demo | ____ | 12-12 |
+| 5 | Implementation, timing, post-implementation timing simulation | ____ | 14-12 |
+| 6 | Report | all | 23-12 |
+
+### Piece 0: expected values
+
+> **In short:** a Python script that writes down the correct answers (`h`, `o`, digit) for all 16 pictures, so the testbench can check our circuit against them. Small and easy: a good first task.
+
+- `scripts/gen_expected.py`: imports the course model (`materials/SW-model-2026116/mlp_model.py`),
+  runs it on the 16 images with the division mode as a parameter, and writes
+  `sim/mlp_expected_pkg.vhd`: `h(img, m)`, `o(img, j)`, `result(img)`.
+- Done when: the package matches the model's printed output for two images, checked by hand.
+- PDF: "compares h, o and result with a software model".
+
+### Piece 1: layer 0
+
+> **In short:** the big one. Make the circuit compute the 128 `h` values and prove every one is right in simulation. Everything else builds on this.
+
+- Rewrite `src/control.vhd` (FSM `IDLE/RUN/DRAIN/DONE` for now, row counter 0..895, `r`, `m`,
+  flag chain, `hValid`/`hAddr`), `src/datapath.vhd` (112 lanes, adder tree, `acc`, ReLU, `h`
+  register) and `src/mlp.vhd` (replaces `circuito.vhd`; memories from `materials/`).
+- `sim/mlp_tb.vhd` (from `circuito_tb.vhd`): one `start` on image 0, checks every `h[m]` on
+  `hValid` against piece 0, and the order of `hAddr`; then all 16 images.
+- First synthesis: LUT/DSP use and timing for 112 lanes, to confirm the lane count early.
+- Done when: all 128 `h` of all 16 images match.
+- PDF: FSMD, number representation, layer 0, `hValid`/`hAddr`/`hOut`.
+
+### Piece 2: layer 1, argmax, done/result
+
+> **In short:** add the 10 scores and pick the winning digit. Done when the simulation says 16 of 16 pictures are correct.
+
+- Datapath: WM1 data, 10 multiply-shift-accumulate, `o` registers, argmax, `result` register.
+  Control: WM1 address, layer-1 update flag, `ARGMAX` state, `done`.
+- `mlp_tb`: checks `o[0..9]` and `result` for the 16 images and prints the number of correct
+  classifications and the latency in cycles.
+- Done when: 16/16 `h`, `o` and `result` match.
+- PDF: overlap of layers, `h`/`o` storage, argmax, testbench report.
+
+### Piece 3: restart and extreme cases
+
+> **In short:** try to break it: press start twice, reset in the middle, use huge or negative numbers, make two digits tie. The professor explicitly asks for these tests.
+
+- Testbench: a second `start` without reset (same and different `img`), `start` during a run
+  (ignored), `reset` in the middle of a run, `done` low while running.
+- Extreme memory sets (needs `gen_mem.py` from the course page): maximum accumulation (pixels 15,
+  weights 127), minimum (pixels 15, weights -128) → ReLU of negatives, ties in argmax, `o` at its
+  extremes. Expected values from piece 0's script.
+- Done when: all sets pass.
+- PDF: "extreme cases", "each time BTNC is pressed ... without the need for a reset".
+
+### Piece 4: board top
+
+> **In short:** the part you can touch: buttons, switches, the display and the LED. Can be done in parallel by someone not working on pieces 1 and 2.
+
+- `board/board_top.vhd`: synchronise and debounce BTNU and BTNC, one-cycle `start` pulse on each
+  BTNC press, 7-segment multiplexing with a counter enable (no divided clock: one global clock),
+  `img` on AN3, `result` on AN0, `LD0 = done`. Constraints in `board/basys3.xdc`.
+- Can be written in parallel, against the `mlp` ports.
+- Done when: the 16 images classify correctly on the board, one after the other.
+- PDF: board interface, demonstration.
+
+### Piece 5: implementation and timing
+
+> **In short:** make sure the real chip is fast enough at 100 MHz, and measure the numbers the report needs.
+
+- Implementation at 10 ns: WNS/WHS, critical path, resources (LUT, FF, DSP, BRAM). If timing fails,
+  add pipeline registers in layer 0 (or, last resort, a slower derived clock).
+- Post-implementation timing simulation of `mlp_tb` with all 16 images.
+- Done when: timing met, the timing simulation passes, and the numbers for the report are
+  recorded (clock period, Fmax, latency, MAC/s, images/s, critical path, resources).
+- PDF: performance, timing simulation, FPGA resources.
+
+### Piece 6: report (11 pages)
+
+> **In short:** write it up. Max 11 pages. Everyone writes the part they built.
+
+- Architecture and datapath block diagrams with the number and size of registers, muxes and
+  operators; FSM state diagram; CDFG and schedule; number representation; `h`/`o`/argmax
+  justification; verification; resources; clock and Fmax; latency, MAC/s, images/s; critical
+  path; references (course memories, SW model, memory generator, Lab 2, any borrowed code).
+- Diagrams can start as soon as piece 1 is done.
+
+### Interface between `control` and `datapath`
+
+To be fixed in piece 1 and kept up to date here:
+
+| Signal | Direction | Meaning |
 |---|---|---|
-| **A. Layer-0 engine** | ____ | Entity `l0_engine`: address counters for IM and WM0, lane multipliers, adder tree, `acc`, ReLU, flag chain, outputs `hValid`, `hAddr`, `hOut`. Reuses Lab 2 B. |
-| **B. Layer 1, argmax and the MLP top** | ____ | Entities `l1_unit`, `argmax` and `mlp`: WM1 addressing, 10 multiply-shift-accumulate units, argmax, the FSM (`start`, `img`, `done`, `result`, restart without reset), and the integration of A's engine. |
-| **C. Verification, board and tools** | ____ | Memory generator with extreme-case sets, testbench, expected-value packages from the SW model, board top (debounce, 7-segment, XDC), Vivado Tcl, post-implementation timing simulation, hardware demo. |
+| `ld_p`, `ld_t`, `ld_acc` | control → datapath | stage enables of layer 0 (valid flags) |
+| `first` | control → datapath | `acc ← row sum` (new neuron) instead of `acc + row sum` |
+| `ld_h` | control → datapath | load the `h` register with ReLU(`acc`) |
+| `ld_o`, `clr_o` | control → datapath | add the 10 layer-1 terms into `o`; clear `o` on `start` |
+| `amax_first`, `amax_step`, `amax_sel(3:0)` | control → datapath | argmax scan |
+| `ld_result` | control → datapath | register the argmax index |
 
-### Track A: layer-0 engine
+Rule: every memory address is generated one cycle before its data is used, and each entity
+documents its latency in cycles in a comment at the top.
 
-- Write `l0_engine` with a `LANES` generic. Datapath and control stay separate entities, as the assignment requires.
-- Row counter 0..895 for WM0 (a counter, no multiplier for `7*m`), IM address `8*img + r` with `r = 0..6`.
-  Since 8*img is a shift, the IM address is just `img & r(2 downto 0)` (7 bits, no adder).
-- Run synthesis for 28, 56 and 112 lanes and report LUT, DSP and the worst setup slack, so the team can pick the final value.
-- Unit testbench: three neurons with known results, including negative `acc` and the extremes
-  (all pixels 15 with all weights -128, and with all weights 127).
-- Handover to B: `hValid`, `hAddr`, `hOut` (see the interface contract).
+## Rules for working with AI tools
 
-### Track B: layer 1, argmax, top
+Most of us write code with Claude, ChatGPT or Copilot. That's fine, but hardware punishes "looks
+right" code: a signal one clock tick late gives wrong numbers with no error message. These rules
+keep the pieces fitting together.
 
-- `l1_unit`: reads WM1 row `m`, multiplies by `h[m]`, applies the division mode decided above, accumulates into 10 registers. The `o` registers are cleared at the start of each image.
-- `argmax`: compares `o[0..9]`, first maximum wins; unit testbench with ties and with all-negative `o`.
-- `mlp` top and FSM: `IDLE`, `RUN`, `DRAIN`, `ARGMAX`, `DONE` (to be refined). `start` while running is ignored; a new `start` after `done` runs again without reset. `img` is captured at `start`.
-- Integrates A's engine and C's testbench early, with a one-lane version if A is not ready.
-
-### Track C: verification, board, tools
-
-- `scripts/`: extend the course memory generator (or write a small one) to create sets with extreme cases: maximum accumulation, minimum accumulation, negative `acc` (ReLU gives 0), ties in the argmax, `o` at its extremes.
-- Python script that runs the SW model on every image and writes `h`, `o` and `result` into a VHDL package for the testbench (the same approach used in Lab 2).
-- Testbench `mlp_tb`: classifies the 16 images, checks `h` on every `hValid`, `o` and `result`, counts correct classifications, prints the latency in cycles and ns, and tests a second `start` without reset and a reset in the middle of a run.
-- Board top: synchronise and debounce `BTNC` and `BTNU`, one-cycle `start` pulse, multiplexed 7-segment display driven by a counter enable (not a divided clock: the assignment asks for one global clock), `LD0 = done`, the `.xdc` (reuse the Lab 2 clock constraint).
-- Runs the Vivado flow: utilization, timing summary, power, post-implementation timing simulation, bitstream, and the demo checklist with all 16 images.
-
-### Shared work
-
-- **Day 1 (all three):** agree the interface contract below, the bit widths, the division mode and the repository layout. Nobody codes before this.
-- **Integration (all three):** behavioural simulation of the full design, then fixing timing.
-- **Report (11 pages):** each owner writes the section for their track (A: layer-0 datapath and critical path; B: FSM, layer 1, argmax; C: verification, resources, power, demo), plus references to the course materials. One person (C) assembles the LaTeX and checks the page limit. Reuse the Lab 2 template and TikZ styles.
-
-### Interface contract (to confirm on day 1)
-
-| Signal | From -> to | Meaning |
-|---|---|---|
-| `start` (1 cycle), `img(3:0)` | B -> A | Begin layer 0 for this image |
-| `hValid` (1 cycle per neuron) | A -> B, testbench | `h[m]` is ready |
-| `hAddr(6:0)`, `hOut(20:0)` | A -> B, testbench | `m` and `h[m]` (unsigned), valid with `hValid` |
-| `hPre`, `hPreAddr(6:0)` | A -> B | Same as `hValid`/`hAddr` but one cycle earlier, so B can present WM1 address `m` in time for the synchronous read |
-| `l0Done` | A -> B | Last `h` (m = 127) has been sent |
-| `o(0..9)`, `oValid` | B (`l1_unit`) -> B (`argmax`) | Final `o` values, 31 bits signed each |
-| `done`, `result(3:0)` | B -> board, testbench | Classification complete |
-
-Timing rule: every memory address is generated one cycle before the data is used (as in Lab 2),
-and every unit documents its latency in cycles in a comment at the top of the file.
+1. **Give your AI this README** (or at least your piece and the
+   [interface table](#interface-between-control-and-datapath)) before asking for code.
+2. **One piece at a time.** Ask for your piece only, not "build the whole MLP".
+3. **Don't let the AI change what others depend on** without telling the team first: the `mlp`
+   ports, the control/datapath signals, the bit widths, the file names. If it wants to, update
+   the table in this README in the same commit and tell the others.
+4. **Keep the split.** All "when" decisions (states, counters, enables) go in `control.vhd`. All
+   maths and data registers go in `datapath.vhd`. No second FSM anywhere. The professor checks this.
+5. **Nothing counts until the testbench passes.** "It compiles" is not done. Run the
+   behavioural simulation, read the pass/fail line, and only then push.
+6. **Ask the AI to explain its timing.** For each register: on which clock tick does the value
+   arrive, and which tick uses it? If you can't answer that, you can't defend it at the demo.
+7. **Never commit Vivado project files** (`vivado/` is ignored) or generated junk (`.Xil`, `.runs`,
+   logs).
+8. **Small commits, clear messages**, e.g. "piece 1: adder tree, 112 lanes". Pull before you start,
+   push when a step works.
+9. **Don't paste tokens or passwords into the AI** or into the repo.
+10. **If something from outside (a debounce module, a 7-segment driver) is copied**, write down
+    where it came from: the report must reference it (PDF, Note 1).
 
 ## Deadlines
-Report delivery: 	23-12-2026 23:59 
-Testing lab: 17-12-2026 16:00 
 
-| Phase | Goal | Done when |
-|---|---|---|
-| 0. Kick-off | Interface contract, widths, division mode, repository | This README is updated and everyone agrees |
-| 1. Blocks | A, B and C finish their entities and unit testbenches | Each unit testbench passes in behavioural simulation |
-| 2. Integration | `mlp` runs one image end to end | One image matches the SW model for `h`, `o`, `result` |
-| 3. Verification | All 16 images and the extreme sets pass | `mlp_tb` reports 16 of 16 and all extreme cases correct |
-| 4. Implementation | Timing met at the chosen clock, post-implementation timing simulation passes | Timing summary with WNS >= 0 and hold met; no latches or gated clocks; no strange warnings |
-| 5. Board | Demo on the Basys 3 for all 16 images | Checklist signed by all three |
-| 6. Report | 11 pages, all required numbers | Latency, MAC/s, images/s, resources, critical path, references |
+- Testing lab (board demo): **17-12-2026 16:00**
+- Report delivery: **23-12-2026 23:59**
 
-## Risks and open questions
+## Risks
 
-- **Division mode** (see above): must be settled before writing the layer-1 unit.
-- **Timing:** Lab 2's critical path was BRAM, multiplexer and a LUT multiplier at 9.78 ns. With 112 lanes the tree and the BRAM fan-out are bigger, so plan for registers after the products from the start.
-- **Area:** 112 LUT multipliers plus the tree should fit in 20 800 LUTs, but measure it early (phase 1) before committing.
-- **Vivado surprises seen in Lab 2:** Vivado may map multipliers to LUTs instead of DSPs, insert replica registers, and add enable-gating cells inside the BRAM macros. Explain such items in the report instead of leaving them as unexplained warnings.
-- **Restart without reset:** every counter, flag and `o` register must return to its initial value when a new `start` arrives; test this explicitly.
+- **Division mode**: settle it with the professor before piece 2.
+- **Timing**: 112 lanes means a 7-level adder tree and wide fan-out from 35 BRAMs. The given
+  BRAMs have no output register (about 2.5 ns clock-to-out), so plan the registers after the
+  products from the start.
+- **Area**: 112 LUT multipliers (4 x 8 bits) plus the tree should fit in 20 800 LUTs; measure in
+  piece 1.
+- **Vivado surprises seen in Lab 2**: multipliers mapped to LUTs instead of DSPs, replica
+  registers, enable-gating cells inside the BRAM macros. Explain them in the report instead of
+  leaving unexplained warnings.
+- **Restart without reset**: every counter, flag and `o` register must return to its initial
+  value on a new `start`; piece 3 tests it.
+
+## Glossary
+
+| Word | Meaning |
+|---|---|
+| **FSMD** | "Finite State Machine with Datapath": the design is split into a controller (the FSM, decides *when*) and a datapath (does the maths). |
+| **FSM** | A circuit that is always in one "state" (IDLE, RUN, ...) and moves between them on clock ticks. |
+| **BRAM** | Block RAM: memory blocks inside the FPGA. Our IM and WM0 are made of them. You give an address, and the data arrives **one clock tick later**. |
+| **Distributed RAM** | Memory built from ordinary logic (LUTs) instead of BRAM. WM1 is one. |
+| **Lane** | One multiplier and its pixel/weight pair. 112 lanes = 112 multiplications per tick. |
+| **Adder tree** | Adding 112 numbers by pairs: 112 → 56 → 28 → ... → 1, in 7 levels. |
+| **Accumulator (`acc`)** | A register that keeps a running total: `acc = acc + new value` every tick. |
+| **ReLU** | "If negative, make it 0." |
+| **argmax** | "Which position holds the biggest value?" Here: which digit has the highest score. |
+| **Pipeline** | Splitting work into steps with registers in between, so a new item can start every tick while older items finish (like a laundry line). |
+| **Register / FF** | A storage cell that updates only on the clock tick (rising edge). |
+| **Signed / unsigned** | Signed numbers can be negative (two's complement); unsigned can't. Pixels are unsigned, weights are signed. |
+| **DSP / DSP48E1** | Ready-made fast multiplier blocks in the FPGA (90 on ours). |
+| **LUT** | The basic logic cell of the FPGA (about 20 800 on ours). |
+| **CDFG** | Control/Data Flow Graph: a drawing of which operations depend on which. The report needs one. |
+| **Testbench (tb)** | A VHDL file that drives the circuit in simulation and checks its outputs. |
+| **Behavioural simulation** | Simulating the VHDL as written: checks the logic, not the timing. |
+| **Post-implementation timing simulation** | Simulating the real placed-and-routed circuit with real delays. The PDF requires it. |
+| **WNS / slack** | How much time is left over on the slowest path at our clock. Must be ≥ 0, or the chip is too slow at that clock. |
+| **Critical path** | The slowest path between two registers. It sets the maximum clock speed. |
+| **Latency** | How many ticks (or how long) one picture takes from `start` to `done`. |
+| **MAC** | One multiply-and-add. One picture needs 101 632 of them. |
+| **Debounce** | Cleaning up a button press: a real button "bounces" and would look like many presses. |
