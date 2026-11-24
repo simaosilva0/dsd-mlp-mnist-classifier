@@ -28,7 +28,6 @@ this split. We start from our Lab 2 code, which already works this way.
 **What to do now.**
 1. Set up Vivado: see [Setting up the Vivado project](#setting-up-the-vivado-project).
 2. Read the [work plan](#work-plan-in-pieces) and put your name on a piece.
-3. Before you or your AI touches code, read the [rules for working with AI](#rules-for-working-with-ai-tools).
 
 **The only open question:** how to "divide by 32" for negative numbers. We ask the professor
 (see [Open decisions](#open-decisions)).
@@ -408,32 +407,6 @@ To be fixed in piece 1 and kept up to date here:
 
 Rule: every memory address is generated one cycle before its data is used, and each entity
 documents its latency in cycles in a comment at the top.
-
-## Rules for working with AI tools
-
-Most of us write code with Claude, ChatGPT or Copilot. That's fine, but hardware punishes "looks
-right" code: a signal one clock tick late gives wrong numbers with no error message. These rules
-keep the pieces fitting together.
-
-1. **Give your AI this README** (or at least your piece and the
-   [interface table](#interface-between-control-and-datapath)) before asking for code.
-2. **One piece at a time.** Ask for your piece only, not "build the whole MLP".
-3. **Don't let the AI change what others depend on** without telling the team first: the `mlp`
-   ports, the control/datapath signals, the bit widths, the file names. If it wants to, update
-   the table in this README in the same commit and tell the others.
-4. **Keep the split.** All "when" decisions (states, counters, enables) go in `control.vhd`. All
-   maths and data registers go in `datapath.vhd`. No second FSM anywhere. The professor checks this.
-5. **Nothing counts until the testbench passes.** "It compiles" is not done. Run the
-   behavioural simulation, read the pass/fail line, and only then push.
-6. **Ask the AI to explain its timing.** For each register: on which clock tick does the value
-   arrive, and which tick uses it? If you can't answer that, you can't defend it at the demo.
-7. **Never commit Vivado project files** (`vivado/` is ignored) or generated junk (`.Xil`, `.runs`,
-   logs).
-8. **Small commits, clear messages**, e.g. "piece 1: adder tree, 112 lanes". Pull before you start,
-   push when a step works.
-9. **Don't paste tokens or passwords into the AI** or into the repo.
-10. **If something from outside (a debounce module, a 7-segment driver) is copied**, write down
-    where it came from: the report must reference it (PDF, Note 1).
 
 ## Deadlines
 
