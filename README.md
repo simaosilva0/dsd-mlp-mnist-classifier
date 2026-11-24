@@ -200,9 +200,9 @@ Three tracks with clear interfaces, so that everybody can work in parallel. Fill
 Timing rule: every memory address is generated one cycle before the data is used (as in Lab 2),
 and every unit documents its latency in cycles in a comment at the top of the file.
 
-## Plan and milestones
-
-No dates are fixed here; fill in the deadlines from the course schedule.
+## Deadlines
+Report delivery: 	23-12-2026 23:59 
+Testing lab: 17-12-2026 16:00 
 
 | Phase | Goal | Done when |
 |---|---|---|
@@ -217,8 +217,6 @@ No dates are fixed here; fill in the deadlines from the course schedule.
 ## Risks and open questions
 
 - **Division mode** (see above): must be settled before writing the layer-1 unit.
-- **Number of images:** the assignment says 16; the header of the given `WMem0.vhd` lists only `mnist_input0.pgm` to `mnist_input8.pgm`
-  in its command line. Check that `IMem.vhd` really contains 16 images and what the board test should use.
 - **Timing:** Lab 2's critical path was BRAM, multiplexer and a LUT multiplier at 9.78 ns. With 112 lanes the tree and the BRAM fan-out are bigger, so plan for registers after the products from the start.
 - **Area:** 112 LUT multipliers plus the tree should fit in 20 800 LUTs, but measure it early (phase 1) before committing.
 - **Vivado surprises seen in Lab 2:** Vivado may map multipliers to LUTs instead of DSPs, insert replica registers, and add enable-gating cells inside the BRAM macros. Explain such items in the report instead of leaving them as unexplained warnings.
