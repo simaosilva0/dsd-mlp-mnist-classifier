@@ -17,3 +17,6 @@ build/
 
 # Local Vivado project (create it by hand in vivado/)
 vivado/
+
+# Python
+__pycache__/

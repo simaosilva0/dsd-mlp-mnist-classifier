@@ -306,7 +306,7 @@ checklist above. Do them in order; pieces 4 and 6 can run in parallel with the o
 
 | # | Piece | Owner | Target date |
 |---|---|---|---|
-| 0 | Expected values from the SW model | ____ | 26-11 |
+| 0 | Expected values from the SW model (done: memories match the model; model gets 14/16, images 2 and 7 wrong) | Isam | 26-11 |
 | 1 | Layer 0: `control` + `datapath` + `mlp`, checks every `h[m]` | ____ | 03-12 |
 | 2 | Layer 1, argmax, `done`/`result`: all 16 images | ____ | 07-12 |
 | 3 | Restart and extreme cases | ____ | 10-12 |
@@ -318,11 +318,29 @@ checklist above. Do them in order; pieces 4 and 6 can run in parallel with the o
 
 > **In short:** a Python script that writes down the correct answers (`h`, `o`, digit) for all 16 pictures, so the testbench can check our circuit against them. Small and easy: a good first task.
 
-- `scripts/gen_expected.py`: imports the course model (`materials/SW-model-2026116/mlp_model.py`),
-  runs it on the 16 images with the division mode as a parameter, and writes
-  `sim/mlp_expected_pkg.vhd`: `h(img, m)`, `o(img, j)`, `result(img)`.
-- Done when: the package matches the model's printed output for two images, checked by hand.
-- PDF: "compares h, o and result with a software model".
+- `scripts/gen_expected.py` uses the course model's own functions
+  (`materials/SW-model-2026116/mlp_model.py`), runs it on the 16 images and writes
+  `sim/mlp_expected_pkg.vhd` with `H_EXP(img)(m)`, `O_EXP(img)(j)`, `RESULT_EXP(img)` and
+  `TRUE_DIGIT(img)`.
+- It first checks that `IMem.vhd`, `WMem0.vhd` and `WMem1.vhd` hold the same images and weights
+  as the model's files, in the order the PDF describes. If they don't, it stops and says where.
+- It prints a table per image (predicted digit, true digit, accumulator range, how many `h` are 0,
+  `o` range, argmax ties) and the 16 images as ASCII art.
+- **Run it** (needs Python 3 with numpy), from the repo root:
+  ```
+  python scripts/gen_expected.py              # division mode 'shift' (the model's default)
+  python scripts/gen_expected.py --mode trunc # if the professor says so ('trunc' or 'sum')
+  ```
+- **True digits:** the `.pgm` files have no labels, so the script has a `TRUE_DIGIT` list read
+  by eye: `6 9 7 2 9 4 4 2 7 0 1 3 5 8 0 6` for images 0..15. Check them against the ASCII art. The
+  testbench will report both "matches the model" (circuit correct) and "matches the true digit"
+  (the PDF's "number of correct classifications").
+- Done when: the script says the memories match, and `H_EXP(0)`, `O_EXP(0)`, `RESULT_EXP(0)` (and image 5)
+  are the same as the output of
+  `python materials/SW-model-2026116/mlp_model.py materials/SW-model-2026116/mnist_input0.pgm materials/SW-model-2026116/w0.txt materials/SW-model-2026116/w1.txt`.
+  The generated package is committed, so nobody else needs Python.
+- PDF: "compares h, o and result with a software model ... and reports the number of correct
+  classifications".
 
 ### Piece 1: layer 0
 
